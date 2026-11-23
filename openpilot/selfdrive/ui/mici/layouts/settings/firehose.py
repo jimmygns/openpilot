@@ -3,7 +3,7 @@ import threading
 import time
 import pyray as rl
 
-from openpilot.common.api import api_get
+from openpilot.common.api import API_HOST, api_get
 from openpilot.common.params import Params
 from openpilot.common.realtime import drop_realtime
 from openpilot.common.swaglog import cloudlog
@@ -190,6 +190,8 @@ class FirehoseLayoutBase(Widget):
     return y
 
   def _get_status(self) -> tuple[str, rl.Color]:
+    if not API_HOST:
+      return tr("DISABLED"), self.GRAY
     network_type = ui_state.sm["deviceState"].networkType
     network_metered = ui_state.sm["deviceState"].networkMetered
 
@@ -199,6 +201,8 @@ class FirehoseLayoutBase(Widget):
       return tr("INACTIVE: connect to an unmetered network"), self.RED
 
   def _fetch_firehose_stats(self):
+    if not API_HOST:
+      return
     try:
       dongle_id = self._params.get("DongleId")
       if not dongle_id or dongle_id == UNREGISTERED_DONGLE_ID:

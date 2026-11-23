@@ -1,11 +1,9 @@
 import jwt
 import os
-import requests
 from datetime import datetime, timedelta, UTC
 from openpilot.common.hardware.hw import Paths
-from openpilot.common.version import get_version
 
-API_HOST = os.getenv('API_HOST', 'https://api.commadotai.com')
+API_HOST = ""
 
 # name: jwt signature algorithm
 KEYS = {"id_rsa": "RS256",
@@ -45,15 +43,8 @@ class Api:
 
 
 def api_get(endpoint, method='GET', timeout=None, access_token=None, session=None, **params):
-  headers = {}
-  if access_token is not None:
-    headers['Authorization'] = "JWT " + access_token
-
-  headers['User-Agent'] = "openpilot-" + get_version()
-
-  # TODO: add session to Api
-  req = requests if session is None else session
-  return req.request(method, API_HOST + "/" + endpoint, timeout=timeout, headers=headers, params=params)
+  del endpoint, method, timeout, access_token, session, params
+  raise RuntimeError("comma cloud API is disabled on PTM builds")
 
 
 def get_key_pair() -> tuple[str, str, str] | tuple[None, None, None]:

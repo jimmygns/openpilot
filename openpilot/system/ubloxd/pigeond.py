@@ -9,7 +9,7 @@ import urllib.parse
 from datetime import datetime, UTC
 
 from openpilot.cereal import log, messaging
-from openpilot.common.api import Api
+from openpilot.common.api import API_HOST, Api
 from openpilot.common.time_helpers import system_time_valid
 from openpilot.common.params import Params
 from openpilot.common.serial import Serial
@@ -52,7 +52,7 @@ def get_assistnow_messages() -> list[bytes]:
       'gnss': 'gps,glo',
       'datatype': 'eph,alm,aux',
     }, safe=':,'), timeout=5)
-  elif dongle_id := params.get('DongleId'):
+  elif API_HOST and (dongle_id := params.get('DongleId')):
     cloudlog.warning("Downloading AssistNow data from comma's AGPS proxy")
     api = Api(dongle_id)
     r = api.get(f"v1/{dongle_id}/assist", access_token=api.get_token(), timeout=5)
@@ -316,6 +316,8 @@ def run_receiving(duration: int = 0):
 
   def download_assistnow() -> None:
     nonlocal assist_messages
+    if not API_HOST and not Params().get('AssistNowToken'):
+      return
     sm = messaging.SubMaster(['deviceState'])
     while assist_messages is None:
       sm.update(1000)

@@ -48,7 +48,7 @@ from openpilot.common.hardware.hw import Paths
 from openpilot.system.athena.rpc import dispatcher, dumps_call, handle, is_call, is_response, loads
 
 
-ATHENA_HOST = os.getenv('ATHENA_HOST', 'wss://athena.comma.ai')
+ATHENA_HOST = ""
 HANDLER_THREADS = int(os.getenv('HANDLER_THREADS', "4"))
 LOCAL_PORT_WHITELIST = {22, }  # SSH
 
@@ -1024,6 +1024,9 @@ def backoff(retries: int) -> int:
 
 
 def main(exit_event: threading.Event | None = None):
+  if not ATHENA_HOST:
+    cloudlog.warning("athenad disabled on PTM builds")
+    return
   try:
     set_core_affinity([0, 1, 2, 3])
   except Exception:

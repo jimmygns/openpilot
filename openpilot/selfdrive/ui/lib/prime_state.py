@@ -4,7 +4,7 @@ import requests
 import threading
 import time
 
-from openpilot.common.api import api_get
+from openpilot.common.api import API_HOST, api_get
 from openpilot.common.params import Params
 from openpilot.common.realtime import drop_realtime
 from openpilot.common.swaglog import cloudlog
@@ -44,7 +44,7 @@ class PrimeState:
     self._pairing_email: str | None = self._params.get("PairingEmail")
     self._commacare = False
 
-    set_offroad_alert("Offroad_Pairing", self.prime_type <= PrimeType.UNPAIRED)
+    set_offroad_alert("Offroad_Pairing", False)
 
     self._running = False
     self._thread = None
@@ -59,6 +59,8 @@ class PrimeState:
     return PrimeType.UNKNOWN
 
   def _fetch_prime_status(self) -> None:
+    if not API_HOST:
+      return
     dongle_id = self._params.get("DongleId")
     if not dongle_id or dongle_id == UNREGISTERED_DONGLE_ID:
       return
@@ -84,6 +86,8 @@ class PrimeState:
       cloudlog.error(f"Failed to fetch prime status: {e}")
 
   def _fetch_pairing_provider(self) -> None:
+    if not API_HOST:
+      return
     dongle_id = self._params.get("DongleId")
     if not dongle_id or dongle_id == UNREGISTERED_DONGLE_ID:
       return
@@ -106,7 +110,7 @@ class PrimeState:
         self.prime_type = prime_type
         self._params.put("PrimeType", int(prime_type))
         cloudlog.info(f"Prime type updated to {prime_type}")
-        set_offroad_alert("Offroad_Pairing", self.prime_type <= PrimeType.UNPAIRED)
+        set_offroad_alert("Offroad_Pairing", bool(API_HOST) and self.prime_type <= PrimeType.UNPAIRED)
 
   def set_provider(self, provider: Provider | None, email: str | None):
     with self._lock:
@@ -157,6 +161,8 @@ class PrimeState:
         time.sleep(self.SLEEP_INTERVAL)
 
   def start(self) -> None:
+    if not API_HOST:
+      return
     if self._thread and self._thread.is_alive():
       return
     self._running = True

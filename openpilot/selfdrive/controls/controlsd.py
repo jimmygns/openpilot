@@ -18,6 +18,15 @@ from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import (
+  LatControlHondaEps,
+  ModelActionRamp,
+  eps_firmware_calibration,
+  get_rack_map,
+  lateral_delay_schedule,
+  lateral_smooth_seconds,
+  scheduled_lateral_delay,
+)
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
@@ -31,6 +40,11 @@ ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 
 
 class Controls:
+  rack_map = None
+  lat_delay_schedule = None
+  lat_smooth_seconds = LAT_SMOOTH_SECONDS
+  model_action_ramp = None
+
   def __init__(self) -> None:
     self.params = Params()
     cloudlog.info("controlsd is waiting for CarParams")
@@ -57,14 +71,23 @@ class Controls:
     self.LoC = LongControl(self.CP)
     self.VM = VehicleModel(self.CP)
     self.LaC: LatControl
+    eps_calibration = eps_firmware_calibration(self.CP)
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
     elif self.CP.steerControlType == car.CarParams.SteerControlType.curvature:
       self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
+    elif eps_calibration is not None:
+      self.LaC = LatControlHondaEps(self.CP, self.CI, DT_CTRL, eps_calibration)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
+
+    honda_eps = isinstance(self.LaC, LatControlHondaEps)
+    self.rack_map = get_rack_map(self.CP, self.LaC.calibration) if honda_eps else None
+    self.lat_delay_schedule = lateral_delay_schedule(self.CP) if honda_eps else None
+    self.lat_smooth_seconds = lateral_smooth_seconds(self.CP, LAT_SMOOTH_SECONDS)
+    self.model_action_ramp = ModelActionRamp() if honda_eps else None
 
   def update_lane_centering_params(self):
     self.lane_centering_enabled = self.params.get_bool("LaneCentering")
@@ -94,8 +117,11 @@ class Controls:
     sr = max(lp.steerRatio, 0.1)
     self.VM.update_params(x, sr)
 
-    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
-    self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
+    if self.rack_map is not None:
+      self.curvature = self.rack_map.curvature_from_angle(CS.steeringAngleDeg - lp.angleOffsetDeg, CS.vEgo, lp.roll)
+    else:
+      steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
+      self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
     if self.CP.lateralTuning.which() == 'torque':
@@ -140,6 +166,8 @@ class Controls:
       new_desired_curvature = self.sm['lateralManeuverPlan'].desiredCurvature if CC.latActive else self.curvature
     else:
       new_desired_curvature = model_v2.action.desiredCurvature if CC.latActive else self.curvature
+      if self.model_action_ramp is not None:
+        new_desired_curvature = self.model_action_ramp.update(new_desired_curvature, self.sm.updated['modelV2'], CC.latActive)
 
     new_desired_curvature = self.lane_centering.update(
       new_desired_curvature, model_v2, CS.vEgo,
@@ -152,7 +180,9 @@ class Controls:
       bool(CS.leftBlinker or CS.rightBlinker))
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
-    lat_delay = self.sm["lateralDelay"].lateralDelay + LAT_SMOOTH_SECONDS
+    lateral_delay = (scheduled_lateral_delay(self.lat_delay_schedule, CS.vEgo)
+                     if self.lat_delay_schedule is not None else self.sm["lateralDelay"].lateralDelay)
+    lat_delay = lateral_delay + self.lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
     steer, lateral_output, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,

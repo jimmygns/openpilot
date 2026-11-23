@@ -11,7 +11,7 @@ from collections.abc import Iterator
 
 from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
-from openpilot.common.api import Api
+from openpilot.common.api import API_HOST, Api
 from openpilot.common.utils import get_upload_stream
 from openpilot.common.params import Params
 from openpilot.common.realtime import set_core_affinity
@@ -138,6 +138,8 @@ class Uploader:
     return None
 
   def do_upload(self, key: str, fn: str):
+    if not API_HOST:
+      raise RuntimeError("uploader disabled on PTM builds")
     url_resp = self.api.get("v1.4/" + self.dongle_id + "/upload_url/", timeout=10, path=key, access_token=self.api.get_token())
     if url_resp.status_code == 412:
       return url_resp
@@ -225,6 +227,9 @@ class Uploader:
 
 
 def main(exit_event: threading.Event | None = None) -> None:
+  if not API_HOST:
+    cloudlog.warning("uploader disabled on PTM builds")
+    return
   if exit_event is None:
     exit_event = threading.Event()
 

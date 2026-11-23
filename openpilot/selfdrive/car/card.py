@@ -21,6 +21,7 @@ from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import StaticModifiedEpsSettings, use_honda_eps_controller
 
 REPLAY = "REPLAY" in os.environ
 
@@ -120,6 +121,12 @@ class Car:
       safety_config = structs.CarParams.SafetyConfig()
       safety_config.safetyModel = structs.CarParams.SafetyModel.noOutput
       self.CP.safetyConfigs = [safety_config]
+    elif (self.CP.brand == "honda" and getattr(self.CI.CC, "modified_eps_steering", None) is not None and
+          use_honda_eps_controller(self.CP)):
+      eps_settings = StaticModifiedEpsSettings()
+      self.CI.CC.modified_eps_settings = eps_settings
+      if getattr(self.CI, "CS", None) is not None:
+        self.CI.CS.modified_eps_settings = eps_settings
 
     if self.CP.secOcRequired:
       # Copy user key if available

@@ -26,6 +26,7 @@ from openpilot.cereal.services import SERVICE_LIST
 from openpilot.cereal.visionipc import VisionStreamType
 from msgq.visionipc import VisionIpcClient, VisionBuf
 from opendbc.car.car_helpers import get_demo_car_params
+from opendbc.car.honda.modified_eps import lane_change_nudge_torque
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from openpilot.common.hardware.usb import cable_connected
@@ -327,12 +328,21 @@ def main(demo=False):
     CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
   cloudlog.info("modeld got CarParams: %s", CP.brand)
 
+  from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import (
+    lateral_delay_schedule,
+    lateral_smooth_seconds,
+    scheduled_lateral_delay,
+  )
+  lat_delay_schedule = lateral_delay_schedule(CP)
+  global LAT_SMOOTH_SECONDS
+  LAT_SMOOTH_SECONDS = lateral_smooth_seconds(CP, LAT_SMOOTH_SECONDS)
+
   # TODO this needs more thought, use .2s extra for now to estimate other delays
   # TODO Move smooth seconds to action function
   long_delay = CP.longitudinalActuatorDelay + LONG_SMOOTH_SECONDS
   prev_action = log.ModelDataV2.Action()
 
-  DH = DesireHelper()
+  DH = DesireHelper(nudge_torque=lane_change_nudge_torque(CP))
 
   while True:
     # Keep receiving frames until we are at least 1 frame ahead of previous extra frame
@@ -372,7 +382,8 @@ def main(demo=False):
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["narrowRoadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
-    lat_delay = sm["lateralDelay"].lateralDelay + LAT_SMOOTH_SECONDS
+    lateral_delay = scheduled_lateral_delay(lat_delay_schedule, v_ego) if lat_delay_schedule is not None else sm["lateralDelay"].lateralDelay
+    lat_delay = lateral_delay + LAT_SMOOTH_SECONDS
     if sm.updated["extrinsicsCalibration"] and sm.seen['narrowRoadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["extrinsicsCalibration"].rpyCalib, dtype=np.float32)
       dc = DEVICE_CAMERAS[(str(sm['deviceState'].deviceType), str(sm['narrowRoadCameraState'].sensor))]

@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-import time
-import json
-import jwt
-from typing import cast
+import hashlib
 from pathlib import Path
 
-from datetime import datetime, timedelta, UTC
-from openpilot.common.api import api_get, get_key_pair
+from openpilot.common.api import get_key_pair
 from openpilot.common.params import Params
-from openpilot.common.spinner import Spinner
 from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
 from openpilot.common.hardware import HARDWARE, PC
 from openpilot.common.hardware.hw import Paths
@@ -24,81 +19,32 @@ def is_registered_device() -> bool:
 
 def register(show_spinner=False) -> str | None:
   """
-  All devices built since March 2024 come with all
-  info stored in /persist/. This is kept around
-  only for devices built before then.
-
-  With a backend update to take serial number instead
-  of dongle ID to some endpoints, this can be removed
-  entirely.
+  Offline-only device ID resolution for PTM builds (never contacts comma servers).
+  Uses cached DongleId or /persist/comma/dongle_id when available, otherwise
+  derives a deterministic local ID on device so startup never blocks or phones home.
   """
+  del show_spinner
   params = Params()
 
   dongle_id: str | None = params.get("DongleId")
-  if dongle_id is None and Path(Paths.persist_root()+"/comma/dongle_id").is_file():
-    # not all devices will have this; added early in comma 3X production (2/28/24)
-    with open(Paths.persist_root()+"/comma/dongle_id") as f:
+  if not dongle_id and Path(Paths.persist_root() + "/comma/dongle_id").is_file():
+    with open(Paths.persist_root() + "/comma/dongle_id") as f:
       dongle_id = f.read().strip()
 
-  # Create registration token, in the future, this key will make JWTs directly
-  jwt_algo, private_key, public_key = get_key_pair()
-
+  _, _, public_key = get_key_pair()
   if not public_key:
     dongle_id = UNREGISTERED_DONGLE_ID
     cloudlog.warning("missing public key")
-  elif dongle_id is None:
-    if show_spinner:
-      spinner = Spinner()
-      spinner.update("registering device")
-
-    # Block until we get the imei
-    serial = HARDWARE.get_serial()
-    start_time = time.monotonic()
-    imei: str | None = None
-    while imei is None:
-      try:
-        imei = HARDWARE.get_imei()
-      except Exception:
-        cloudlog.exception("Error getting imei, trying again...")
-        time.sleep(1)
-
-      if time.monotonic() - start_time > 60 and show_spinner:
-        spinner.update(f"registering device - serial: {serial}, IMEI: {imei}")
-
-    backoff = 0
-    start_time = time.monotonic()
-    while True:
-      try:
-        register_token = jwt.encode({'register': True, 'exp': datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)},
-                                    cast(str, private_key), algorithm=jwt_algo)
-        cloudlog.info("getting pilotauth")
-        resp = api_get("v2/pilotauth/", method='POST', timeout=15,
-                       imei=imei, imei2="", serial=serial, public_key=public_key, register_token=register_token)
-
-        if resp.status_code in (402, 403):
-          cloudlog.info(f"Unable to register device, got {resp.status_code}")
-          dongle_id = UNREGISTERED_DONGLE_ID
-        else:
-          dongleauth = json.loads(resp.text)
-          dongle_id = dongleauth["dongle_id"]
-        break
-      except NotImplementedError:
-        # dependency issues with PyJWT will hang the registration test in backoff loop otherwise
-        raise
-      except Exception:
-        cloudlog.exception("failed to authenticate")
-        backoff = min(backoff + 1, 15)
-        time.sleep(backoff)
-
-      if time.monotonic() - start_time > 60 and show_spinner:
-        spinner.update(f"registering device - serial: {serial}, IMEI: {imei}")
-
-    if show_spinner:
-      spinner.close()
+  elif not dongle_id or dongle_id == UNREGISTERED_DONGLE_ID:
+    if PC:
+      dongle_id = UNREGISTERED_DONGLE_ID
+    else:
+      serial = HARDWARE.get_serial()
+      dongle_id = hashlib.sha256(f"local-{serial}".encode()).hexdigest()[:16]
 
   if dongle_id:
     params.put("DongleId", dongle_id, block=True)
-    set_offroad_alert("Offroad_UnregisteredHardware", (dongle_id == UNREGISTERED_DONGLE_ID) and not PC)
+    set_offroad_alert("Offroad_UnregisteredHardware", False)
   return dongle_id
 
 

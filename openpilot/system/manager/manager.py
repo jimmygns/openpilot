@@ -15,13 +15,16 @@ from openpilot.common.hardware import HARDWARE
 from openpilot.system.manager.helpers import unblock_stdout, save_bootlog
 from openpilot.system.manager.process import ensure_running
 from openpilot.system.manager.process_config import managed_processes
-from openpilot.system.athena.registration import register, UNREGISTERED_DONGLE_ID
+from openpilot.system.athena.registration import register
+from openpilot.system.loggerd.uploader import clear_locks
 from openpilot.common.swaglog import cloudlog, add_file_handler
 from openpilot.common.version import get_build_metadata
 from openpilot.common.hardware.hw import Paths
 
 
 def manager_init() -> None:
+  if os.path.isdir(Paths.log_root()):
+    clear_locks(Paths.log_root())
   save_bootlog()
 
   build_metadata = get_build_metadata()
@@ -104,9 +107,7 @@ def manager_thread() -> None:
 
   params = Params()
 
-  ignore: list[str] = []
-  if params.get("DongleId") in (None, UNREGISTERED_DONGLE_ID):
-    ignore += ["manage_athenad", "uploader"]
+  ignore: list[str] = ["manage_athenad", "uploader"]
   if os.getenv("NOBOARD") is not None:
     ignore.append("pandad")
   ignore += [x for x in os.getenv("BLOCK", "").split(",") if len(x) > 0]
